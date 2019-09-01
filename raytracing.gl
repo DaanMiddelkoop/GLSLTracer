@@ -1,0 +1,45 @@
+#version 430
+
+uniform vec3 pos;
+uniform vec3 dir;
+
+#define X %%X%%
+#define Y %%Y%%
+#define Z %%Z%%
+#define W %%W%%
+#define H %%H%%
+
+#define numTriangles %%numTriangles%%
+
+struct Triangle {
+    vec3 a;
+    vec3 b;
+    vec3 c;
+    vec3 color;
+    float intensity;
+};
+
+layout(local_size_x=1, local_size_y=1, local_size_z=1) in;
+
+layout (std430, binding=0) buffer in_0
+{
+    Triangle triangles[];
+};
+
+layout (std430, binding=1) buffer out_0
+{
+    vec3 pixels[16000];
+};
+
+void main()
+{
+    uint px = gl_GlobalInvocationID.x;
+    uint py = gl_GlobalInvocationID.y;
+
+    pixels[px * W + py] = vec3(1, 1, 1);
+
+
+
+  // process input(s) and do some weird graphics stuff
+  // output processed stuff to output variable
+}
