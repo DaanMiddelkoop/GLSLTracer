@@ -14,7 +14,6 @@ def read_obj(filename):
 
 def read_part(line, obj_data):
     data = line.split(' ')
-    print(data)
 
     if data[0] == 'v':
         obj_data.add_vertex(Vector(float(data[1]), float(data[2]), float(data[3])))
@@ -38,7 +37,7 @@ def process_triangle(data, obj_data):
     v3 = obj_data.vertices[v3i]
 
 
-    normal = calc_normal(v1, v2, v3)
+    normal = calc_normal(v1, v2, v3).normalize()
 
     n1 = normal
     n2 = normal

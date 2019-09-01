@@ -8,6 +8,7 @@ uniform vec3 dir;
 #define Z %%Z%%
 #define W %%W%%
 #define H %%H%%
+#define EPSILON 0.0000001
 
 #define numTriangles %%numTriangles%%
 
@@ -15,8 +16,23 @@ struct Triangle {
     vec3 a;
     vec3 b;
     vec3 c;
+    vec3 n1;
+    vec3 n2;
+    vec3 n3;
     vec3 color;
     float intensity;
+};
+
+struct RayTraceResult {
+  vec3 intersectionPoint;
+  vec3 normal;
+  float distance;
+  Triangle triangle;
+};
+
+struct Camera {
+  vec3 rayOrigin;
+  vec3 rayVector;
 };
 
 layout(local_size_x=1, local_size_y=1, local_size_z=1) in;
@@ -28,18 +44,194 @@ layout (std430, binding=0) buffer in_0
 
 layout (std430, binding=1) buffer out_0
 {
-    vec3 pixels[16000];
+    vec3 pixels[];
 };
+
+layout (std430, binding=2) buffer in_1
+{
+    Camera camera;
+};
+
+//int random_sed;
+
+vec2 random_uv_seed;
+
+
+// int LFSR_Rand_Gen(in int n)
+// {
+//   // <<, ^ and & require GL_EXT_gpu_shader4.
+//   n = (n << 13) ^ n;
+//   return (n * (n*n*15731+789221) + 1376312589) & 0x7fffffff;
+// }
+
+float random_seed(vec2 uv) {
+  return fract(sin(dot(uv,vec2(12.9898,78.233)))*43758.5453123);
+}
+
+float random() {
+  float r1 = random_seed(random_uv_seed);
+  float r2 = random_seed(random_uv_seed);
+
+  random_uv_seed = vec2(r1, r2);
+  return r2;
+  // int random = LFSR_Rand_Gen(random_seed);
+  // random_seed = random;
+  //
+  // return float(random) / 2147483647;
+}
+
+vec3 rotateVec(vec3 a, vec3 b, float angle) {
+  vec3 a_follow_b = (dot(a, b) / dot(b, b)) * b;
+  vec3 a_ortagonal_b = a - a_follow_b;
+  vec3 w = cross(b, a_ortagonal_b);
+  float x1 = cos(angle) / length(a_ortagonal_b);
+  float x2 = sin(angle) / length(w);
+
+  return (length(a_ortagonal_b) * ((x1 * a_ortagonal_b) + (x2 * w)) + a_follow_b);
+}
+
+vec3 getPixelAngle(vec3 rayVector, uint px, uint py) {
+  vec3 up = vec3(0, 1, 0);
+  vec3 side = cross(rayVector, up);
+
+  float vertical_angle = -((float(py) / H) - 0.5);
+  float horizontal_angle = ((float(px) / H) - 0.5);
+
+  vec3 result = rotateVec(rayVector, vec3(0, 1, 0), horizontal_angle);
+  return rotateVec(result, side, vertical_angle);
+}
+
+bool RayIntersectsTriangle(vec3 rayOrigin, vec3 rayVector, Triangle triangle, inout RayTraceResult result) {
+  vec3 vertex0 = triangle.a;
+  vec3 vertex1 = triangle.b;
+  vec3 vertex2 = triangle.c;
+
+  vec3 edge1 = vertex1 - vertex0;
+  vec3 edge2 = vertex2 - vertex0;
+
+  vec3 h = cross(rayVector, edge2);
+  float a = dot(edge1, h);
+
+  if (a > -EPSILON && a < EPSILON) {
+    return false; // Parallel ray
+  }
+
+  float f = 1.0 / a;
+  vec3 s = rayOrigin - vertex0;
+  float u = f * dot(s, h);
+
+  if (u < 0.0 || u > 1.0) {
+    return false;
+  }
+
+  vec3 q = cross(s, edge1);
+  float v = f * dot(rayVector, q);
+
+  if (v < 0.0 || u + v > 1.0) {
+    return false;
+  }
+
+  float t = f * dot(edge2, q) * 0.999;
+  if (t > EPSILON) {
+    result.intersectionPoint = rayOrigin + rayVector * t;
+    result.distance = length(result.intersectionPoint - rayOrigin);
+    result.normal = (u * triangle.n2) + (v * triangle.n3) + ((1 - u - v) * triangle.n1);
+    result.triangle = triangle;
+    return true;
+  } else {
+    return false;
+  }
+
+}
+
+RayTraceResult trace_data(Camera ray) {
+  float closest = 999999999;
+  RayTraceResult final;
+  final.distance = -1;
+  for (int t = 0; t < numTriangles; t++) {
+    RayTraceResult result;
+    if (RayIntersectsTriangle(ray.rayOrigin, ray.rayVector, triangles[t], result) && result.distance < closest) {
+      closest = result.distance;
+      final = result;
+    }
+  }
+  return final;
+}
+
+vec3 calc_light(vec3 color, float intensity) {
+  return color * intensity;
+}
+
+vec3 randomize_direction(vec3 direction) {
+  return rotateVec(direction, vec3(random(), random(), random()), random() * 1000);
+}
+
+vec3 bounce2(Camera ray) {
+  return vec3(0, 0, 0);
+}
+
+vec3 tracing2(Camera ray) {
+    RayTraceResult result = trace_data(ray);
+
+    if (result.distance > 0) {
+      vec3 final_color = result.triangle.color * result.triangle.intensity;
+
+      Camera new_camera = Camera(result.intersectionPoint, rotateVec(-1 * ray.rayVector, result.normal, 1.57079632679));
+      final_color += bounce2(new_camera);
+      //return result.intersectionPoint;
+
+      return final_color;
+    } else {
+      return vec3(0, 0, 0);
+    }
+}
+
+vec3 bounce1(Camera ray) {
+  uint ray_amount = 50;
+  vec3 final_color = vec3(0, 0, 0);
+
+  for (int x = 0; x < ray_amount; x++) {
+    random_uv_seed.x *= x;
+    random_uv_seed.y *= x;
+
+    Camera new_ray;
+    new_ray.rayOrigin = ray.rayOrigin;
+    new_ray.rayVector = randomize_direction(ray.rayVector);
+
+    return new_ray.rayVector;
+
+    final_color += ((1 / float(ray_amount)) * tracing2(new_ray));
+  }
+  return final_color;
+}
+
+vec3 tracing1(Camera ray) {
+    RayTraceResult result = trace_data(ray);
+
+    if (result.distance >= 0) {
+      vec3 final_color = result.triangle.color * result.triangle.intensity;
+
+      Camera new_camera = Camera(result.intersectionPoint, -1 * rotateVec(ray.rayVector, result.normal, 1.57079632679));
+      //return result.normal;
+
+      final_color += bounce1(new_camera);
+
+      return final_color;
+    } else {
+      return vec3(0, 1, 0);
+    }
+}
 
 void main()
 {
-    uint px = gl_GlobalInvocationID.x;
-    uint py = gl_GlobalInvocationID.y;
+  uint px = gl_GlobalInvocationID.x;
+  uint py = gl_GlobalInvocationID.y;
 
-    pixels[px * W + py] = vec3(1, 1, 1);
+  //random_seed = int(px * W + py);
+  random_uv_seed = vec2(0.5, 0.5);
 
+  Camera ray = camera;
+  ray.rayVector = getPixelAngle(camera.rayVector, px, py);
 
-
-  // process input(s) and do some weird graphics stuff
-  // output processed stuff to output variable
+  pixels[px * W + py] = tracing1(ray);
 }
